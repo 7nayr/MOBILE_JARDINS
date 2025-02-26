@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, StyleSheet, TouchableOpacity, Text, Modal, ScrollView } from 'react-native';
-import { APIProvider, Map, Marker, useMap } from '@vis.gl/react-google-maps';
+// Import WebView pour afficher Google Maps
+import { WebView } from 'react-native-webview';
 import { collection, getDocs, getDoc, doc, GeoPoint } from 'firebase/firestore';
 import { db } from '../firebase/config';
 
@@ -37,200 +38,7 @@ interface RouteInfo {
 // Google Maps API Key
 const GOOGLE_MAPS_API_KEY = "AIzaSyCf2igaoyY9Be4tUdFf71mFPJ1Z0baQ3P8";
 
-// DirectionsRenderer Component - Optimized to prevent disappearing routes
-const DirectionsRenderer: React.FC<{
-  waypoints: LatLng[],
-  onRouteInfoUpdate: (routeInfo: RouteInfo) => void
-}> = ({ waypoints, onRouteInfoUpdate }) => {
-  const map = useMap();
-  const directionsRendererRef = useRef<google.maps.DirectionsRenderer | null>(null);
-  const directionsServiceRef = useRef<google.maps.DirectionsService | null>(null);
-  const lastWaypointsRef = useRef<string>("");
-  
-  useEffect(() => {
-    // Initialize directions service once
-    if (!directionsServiceRef.current) {
-      directionsServiceRef.current = new google.maps.DirectionsService();
-    }
-    
-    // Initialize renderer only once
-    if (!directionsRendererRef.current && map) {
-      directionsRendererRef.current = new google.maps.DirectionsRenderer({
-        suppressMarkers: true,
-        polylineOptions: {
-          strokeColor: '#FF0000',
-          strokeOpacity: 0.8,
-          strokeWeight: 5
-        }
-      });
-      directionsRendererRef.current.setMap(map);
-    }
-    
-    // Cleanup function
-    return () => {
-      if (directionsRendererRef.current) {
-        directionsRendererRef.current.setMap(null);
-        directionsRendererRef.current = null;
-      }
-    };
-  }, [map]);
-  
-  useEffect(() => {
-    // Skip if map not ready or not enough waypoints
-    if (!map || !directionsRendererRef.current || !directionsServiceRef.current || waypoints.length < 2) {
-      console.log("⚠️ Cannot render directions: map or waypoints not ready");
-      return;
-    }
-    
-    // Convert waypoints to string for comparison to avoid unnecessary re-renders
-    const waypointsString = JSON.stringify(waypoints);
-    
-    // Skip if waypoints haven't changed
-    if (waypointsString === lastWaypointsRef.current) {
-      console.log("🔄 Skipping direction calculation, waypoints unchanged");
-      return;
-    }
-    
-    // Update last waypoints reference
-    lastWaypointsRef.current = waypointsString;
-    
-    console.log("🔍 Calculating route with waypoints:", waypoints);
-    
-    // Prepare directions request
-    const origin = waypoints[0];
-    const destination = waypoints[waypoints.length - 1];
-    const middleWaypoints = waypoints.slice(1, waypoints.length - 1).map(point => ({
-      location: new google.maps.LatLng(point.lat, point.lng),
-      stopover: true
-    }));
-    
-    const request: google.maps.DirectionsRequest = {
-      origin: new google.maps.LatLng(origin.lat, origin.lng),
-      destination: new google.maps.LatLng(destination.lat, destination.lng),
-      waypoints: middleWaypoints,
-      optimizeWaypoints: false,
-      travelMode: google.maps.TravelMode.DRIVING
-    };
-    
-    // Request directions
-    directionsServiceRef.current.route(request, (result, status) => {
-      if (status === google.maps.DirectionsStatus.OK && result) {
-        console.log("🛣️ Route calculated successfully");
-        
-        // Ensure the renderer is still available and set on the map
-        if (directionsRendererRef.current) {
-          directionsRendererRef.current.setMap(map);
-          directionsRendererRef.current.setDirections(result);
-        } else {
-          console.error("⚠️ DirectionsRenderer not available");
-        }
-        
-        // Process route information
-        const route = result.routes[0];
-        if (route && route.legs) {
-          let totalDistance = 0;
-          let totalDuration = 0;
-          const allSteps: RouteStep[] = [];
-          
-          // Process each leg of the route
-          route.legs.forEach(leg => {
-            if (leg.distance) totalDistance += leg.distance.value;
-            if (leg.duration) totalDuration += leg.duration.value;
-            
-            // Get detailed steps
-            if (leg.steps) {
-              leg.steps.forEach(step => {
-                if (step.instructions && step.distance && step.duration) {
-                  allSteps.push({
-                    instruction: step.instructions.replace(/<[^>]*>/g, ''),
-                    distance: step.distance.text,
-                    duration: step.duration.text
-                  });
-                }
-              });
-            }
-          });
-          
-          // Format total distance and duration
-          const formatTotalDistance = totalDistance < 1000
-            ? `${totalDistance} m`
-            : `${(totalDistance / 1000).toFixed(1)} km`;
-            
-          const formatTotalDuration = totalDuration < 60
-            ? `${totalDuration} sec`
-            : totalDuration < 3600
-              ? `${Math.floor(totalDuration / 60)} min`
-              : `${Math.floor(totalDuration / 3600)} h ${Math.floor((totalDuration % 3600) / 60)} min`;
-          
-          // Update route information
-          onRouteInfoUpdate({
-            totalDistance: formatTotalDistance,
-            totalDuration: formatTotalDuration,
-            steps: allSteps
-          });
-        }
-      } else {
-        console.error("❌ Error calculating route:", status);
-        
-        // Reset route information on failure
-        onRouteInfoUpdate({
-          totalDistance: "Non disponible",
-          totalDuration: "Non disponible",
-          steps: []
-        });
-      }
-    });
-  }, [map, waypoints, onRouteInfoUpdate]);
-  
-  return null;
-};
-
-// Map Adjuster Component - Optimized to prevent excessive rerendering
-const MapAdjuster: React.FC<{points: LatLng[]}> = ({ points }) => {
-  const map = useMap();
-  const processedPointsRef = useRef<string>("");
-  
-  useEffect(() => {
-    if (!map || points.length <= 1) return;
-    
-    // Convert points to string for comparison
-    const pointsString = JSON.stringify(points);
-    
-    // Skip if points haven't changed
-    if (pointsString === processedPointsRef.current) {
-      return;
-    }
-    
-    // Update processed points reference
-    processedPointsRef.current = pointsString;
-    
-    // Create bounds to include all points
-    const bounds = new google.maps.LatLngBounds();
-    points.forEach(point => {
-      bounds.extend(point);
-    });
-    
-    // Adjust map to show all points
-    map.fitBounds(bounds);
-    
-    // Add some margin (zoom out slightly)
-    const listener = google.maps.event.addListenerOnce(map, 'bounds_changed', () => {
-      const currentZoom = map.getZoom();
-      if (currentZoom !== undefined) {
-        const newZoom = Math.max(Math.min(currentZoom - 1, 17), 10);
-        map.setZoom(newZoom);
-      }
-    });
-    
-    return () => {
-      google.maps.event.removeListener(listener);
-    };
-  }, [map, points]);
-  
-  return null;
-};
-
-// Main Map Component
+// Création d'une solution native pour React Native
 const MapDepot: React.FC = () => {
   const [selectedTournee, setSelectedTournee] = useState<string | null>(null);
   const [tournees, setTournees] = useState<Tournee[]>([]);
@@ -242,14 +50,11 @@ const MapDepot: React.FC = () => {
   const [isItineraireModalVisible, setItineraireModalVisible] = useState(false);
   const [mapCenter, setMapCenter] = useState({ lat: 48.1765, lng: 6.4508 });
   const [mapZoom, setMapZoom] = useState(12);
+  const [isLoading, setIsLoading] = useState(false);
+  const [htmlContent, setHtmlContent] = useState('');
+  const webViewRef = useRef<WebView>(null);
   
-  // Memoized route info handler to prevent recreating on each render
-  const handleRouteInfoUpdate = useCallback((info: RouteInfo) => {
-    console.log("📌 Route information updated:", info);
-    setRouteInfo(info);
-  }, []);
-  
-  // Fetch tournees from Firestore
+  // Récupérer les tournées de Firestore
   useEffect(() => {
     const fetchTournees = async () => {
       try {
@@ -267,9 +72,9 @@ const MapDepot: React.FC = () => {
     fetchTournees();
   }, []);
   
-  // Fetch depots for selected tournee
+  // Récupérer les dépôts pour la tournée sélectionnée
   useEffect(() => {
-    // Reset data when new tournee is selected
+    // Réinitialiser les données lorsqu'une nouvelle tournée est sélectionnée
     if (!selectedTournee) {
       setDepots([]);
       setRoute([]);
@@ -279,32 +84,32 @@ const MapDepot: React.FC = () => {
     
     const fetchDepots = async () => {
       try {
-        console.log(`📍 Fetching depots for tournee: ${selectedTournee}`);
+        setIsLoading(true);
         
-        // Get tournee document
+        // Obtenir le document de tournée
         const tourneeRef = doc(db, "tournees", selectedTournee);
         const tourneeSnap = await getDoc(tourneeRef);
         
         if (!tourneeSnap.exists()) {
-          console.log("Tournee does not exist");
           setDepots([]);
           setRoute([]);
           setRouteInfo(null);
+          setIsLoading(false);
           return;
         }
         
-        // Get depot IDs from tournee
+        // Obtenir les IDs de dépôt de la tournée
         const depotsIds: string[] = tourneeSnap.data().points_depots || [];
         
         if (depotsIds.length === 0) {
-          console.log("📍 No depots found for this tournee");
           setDepots([]);
           setRoute([]);
           setRouteInfo(null);
+          setIsLoading(false);
           return;
         }
         
-        // Fetch all depot documents
+        // Récupérer tous les documents de dépôt
         const depotsData = (await Promise.all(
           depotsIds.map(async (depotId) => {
             try {
@@ -319,21 +124,20 @@ const MapDepot: React.FC = () => {
                 };
               }
             } catch (error) {
-              console.error(`Error fetching depot ${depotId}:`, error);
+              console.error(`Erreur lors de la récupération du dépôt ${depotId}:`, error);
             }
             return null;
           })
         )).filter(depot => depot !== null) as Depot[];
         
-        // Maintain order specified in points_depots
+        // Maintenir l'ordre spécifié dans points_depots
         const orderedDepots = depotsIds
           .map(id => depotsData.find(depot => depot.id === id))
           .filter(depot => depot !== undefined && depot.coordonnes) as Depot[];
         
-        console.log(`📍 ${orderedDepots.length} depots retrieved`);
         setDepots(orderedDepots);
         
-        // Generate route in correct order
+        // Générer l'itinéraire dans le bon ordre
         const newRoute = orderedDepots
           .filter(depot => depot.coordonnes)
           .map(depot => ({
@@ -341,10 +145,8 @@ const MapDepot: React.FC = () => {
             lng: depot.coordonnes!.longitude
           }));
         
-        console.log("🛣️ Route points for calculation:", newRoute);
-        
         if (newRoute.length > 1) {
-          // Calculate map center
+          // Calculer le centre de la carte
           let sumLat = 0;
           let sumLng = 0;
           
@@ -353,74 +155,237 @@ const MapDepot: React.FC = () => {
             sumLng += point.lng;
           });
           
-          setMapCenter({
+          const center = {
             lat: sumLat / newRoute.length,
             lng: sumLng / newRoute.length
-          });
+          };
           
-          // Adjust zoom based on number of points
+          setMapCenter(center);
+          
+          // Ajuster le zoom en fonction du nombre de points
           setMapZoom(newRoute.length > 5 ? 11 : 13);
           
-          // Update route last to trigger rendering
+          // Mettre à jour l'itinéraire
           setRoute(newRoute);
+          
+          // Générer le contenu HTML pour WebView
+          generateMapHtml(newRoute, center);
         } else {
-          console.log("⚠️ Not enough points to calculate a route");
           setRoute([]);
           setRouteInfo(null);
+          setIsLoading(false);
         }
       } catch (error) {
-        console.error("Error fetching depots:", error);
+        console.error("Erreur lors de la récupération des dépôts:", error);
         setDepots([]);
         setRoute([]);
         setRouteInfo(null);
+        setIsLoading(false);
       }
     };
     
     fetchDepots();
   }, [selectedTournee]);
   
+  // Générer le HTML pour la carte
+  const generateMapHtml = (waypoints: LatLng[], center: LatLng) => {
+    const waypointsString = JSON.stringify(waypoints);
+    
+    const html = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+          <style>
+            body, html, #map {
+              height: 100%;
+              margin: 0;
+              padding: 0;
+            }
+          </style>
+        </head>
+        <body>
+          <div id="map"></div>
+          
+          <script>
+            // Variables globales
+            let map;
+            let directionsService;
+            let directionsRenderer;
+            let markers = [];
+            
+            // Initialiser la carte
+            function initMap() {
+              const waypoints = ${waypointsString};
+              const center = ${JSON.stringify(center)};
+              
+              // Créer la carte
+              map = new google.maps.Map(document.getElementById('map'), {
+                center: center,
+                zoom: ${mapZoom},
+                disableDefaultUI: false,
+                gestureHandling: 'greedy'
+              });
+              
+              // Créer le service de directions
+              directionsService = new google.maps.DirectionsService();
+              directionsRenderer = new google.maps.DirectionsRenderer({
+                suppressMarkers: true,
+                polylineOptions: {
+                  strokeColor: '#FF0000',
+                  strokeOpacity: 0.8,
+                  strokeWeight: 5
+                }
+              });
+              
+              directionsRenderer.setMap(map);
+              
+              // Ajouter les marqueurs
+              waypoints.forEach((point, index) => {
+                const marker = new google.maps.Marker({
+                  position: point,
+                  map: map,
+                  title: \`Arrêt \${index + 1}\`,
+                  label: \`\${index + 1}\`
+                });
+                markers.push(marker);
+              });
+              
+              // Calculer l'itinéraire
+              calcRoute(waypoints);
+              
+              // Ajuster les limites pour voir tous les points
+              const bounds = new google.maps.LatLngBounds();
+              waypoints.forEach(point => {
+                bounds.extend(point);
+              });
+              map.fitBounds(bounds);
+            }
+            
+            // Calculer l'itinéraire
+            function calcRoute(waypoints) {
+              if (waypoints.length < 2) return;
+              
+              const origin = waypoints[0];
+              const destination = waypoints[waypoints.length - 1];
+              const middleWaypoints = waypoints.slice(1, waypoints.length - 1).map(point => ({
+                location: new google.maps.LatLng(point.lat, point.lng),
+                stopover: true
+              }));
+              
+              const request = {
+                origin: new google.maps.LatLng(origin.lat, origin.lng),
+                destination: new google.maps.LatLng(destination.lat, destination.lng),
+                waypoints: middleWaypoints,
+                optimizeWaypoints: false,
+                travelMode: google.maps.TravelMode.DRIVING
+              };
+              
+              directionsService.route(request, (result, status) => {
+                if (status === google.maps.DirectionsStatus.OK) {
+                  directionsRenderer.setDirections(result);
+                  
+                  // Extraire les informations d'itinéraire
+                  const route = result.routes[0];
+                  if (route && route.legs) {
+                    let totalDistance = 0;
+                    let totalDuration = 0;
+                    const allSteps = [];
+                    
+                    route.legs.forEach(leg => {
+                      if (leg.distance) totalDistance += leg.distance.value;
+                      if (leg.duration) totalDuration += leg.duration.value;
+                      
+                      if (leg.steps) {
+                        leg.steps.forEach(step => {
+                          if (step.instructions && step.distance && step.duration) {
+                            allSteps.push({
+                              instruction: step.instructions.replace(/<[^>]*>/g, ''),
+                              distance: step.distance.text,
+                              duration: step.duration.text
+                            });
+                          }
+                        });
+                      }
+                    });
+                    
+                    // Formater la distance et la durée
+                    const formatTotalDistance = totalDistance < 1000
+                      ? \`\${totalDistance} m\`
+                      : \`\${(totalDistance / 1000).toFixed(1)} km\`;
+                      
+                    const formatTotalDuration = totalDuration < 60
+                      ? \`\${totalDuration} sec\`
+                      : totalDuration < 3600
+                        ? \`\${Math.floor(totalDuration / 60)} min\`
+                        : \`\${Math.floor(totalDuration / 3600)} h \${Math.floor((totalDuration % 3600) / 60)} min\`;
+                    
+                    // Envoyer les infos à React Native
+                    window.ReactNativeWebView.postMessage(JSON.stringify({
+                      type: 'routeInfo',
+                      data: {
+                        totalDistance: formatTotalDistance,
+                        totalDuration: formatTotalDuration,
+                        steps: allSteps
+                      }
+                    }));
+                  }
+                } else {
+                  console.error("Erreur de calcul d'itinéraire:", status);
+                  window.ReactNativeWebView.postMessage(JSON.stringify({
+                    type: 'routeError',
+                    error: status
+                  }));
+                }
+              });
+            }
+          </script>
+          
+          <script async defer src="https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}&callback=initMap"></script>
+        </body>
+      </html>
+    `;
+    
+    setHtmlContent(html);
+  };
+  
+  // Gestionnaire de messages de WebView
+  const handleWebViewMessage = (event: any) => {
+    try {
+      const message = JSON.parse(event.nativeEvent.data);
+      
+      if (message.type === 'routeInfo') {
+        setRouteInfo(message.data);
+        setIsLoading(false);
+      } else if (message.type === 'routeError') {
+        console.error('Erreur de calcul d\'itineraire:', message.error);
+        setIsLoading(false);
+      }
+    } catch (error) {
+      console.error('Erreur de traitement du message WebView:', error);
+    }
+  };
+  
   return (
     <View style={styles.container}>
-      {/* Google Maps API Provider */}
-      <APIProvider apiKey={GOOGLE_MAPS_API_KEY}>
-        {/* Map Component */}
-        <Map
+      {/* WebView pour Google Maps */}
+      {htmlContent ? (
+        <WebView
+          ref={webViewRef}
+          source={{ html: htmlContent }}
           style={styles.map}
-          defaultCenter={mapCenter}
-          defaultZoom={mapZoom}
-          center={mapCenter}
-          zoom={mapZoom}
-          gestureHandling={'greedy'}
-          disableDefaultUI={true}
-        >
-          {/* Adjust map to show all points */}
-          {route.length > 1 && <MapAdjuster points={route} />}
-          
-          {/* Route rendering with directions */}
-          {route.length > 1 && (
-            <DirectionsRenderer 
-              waypoints={route} 
-              onRouteInfoUpdate={handleRouteInfoUpdate} 
-            />
-          )}
-          
-          {/* Markers for each depot */}
-          {depots.map((depot, index) => (
-            depot.coordonnes && (
-              <Marker 
-                key={depot.id}
-                position={{
-                  lat: depot.coordonnes.latitude,
-                  lng: depot.coordonnes.longitude
-                }}
-                title={`${index + 1}. ${depot.lieu}`}
-              />
-            )
-          ))}
-        </Map>
-      </APIProvider>
+          javaScriptEnabled={true}
+          domStorageEnabled={true}
+          onMessage={handleWebViewMessage}
+          onError={(error) => console.error('WebView error:', error)}
+        />
+      ) : (
+        <View style={styles.placeholderMap}>
+          <Text>Sélectionnez une tournée pour afficher la carte</Text>
+        </View>
+      )}
       
-      {/* Button to select a tournee */}
+      {/* Bouton pour sélectionner une tournée */}
       <TouchableOpacity 
         style={styles.button} 
         onPress={() => setTourneeModalVisible(true)}
@@ -433,20 +398,18 @@ const MapDepot: React.FC = () => {
         </Text>
       </TouchableOpacity>
       
-      {/* Button to view depot addresses */}
+      {/* Bouton pour voir les adresses des dépôts */}
       <TouchableOpacity 
-        style={styles.addressButton}
+        style={[styles.addressButton, !depots.length && styles.disabledButton]}
         onPress={() => setAdressesModalVisible(true)}
+        disabled={!depots.length}
       >
         <Text style={styles.buttonText}>Voir les adresses</Text>
       </TouchableOpacity>
       
-      {/* Button to view detailed route */}
+      {/* Bouton pour voir l'itinéraire détaillé */}
       <TouchableOpacity 
-        style={{
-          ...styles.itineraireButton,
-          backgroundColor: routeInfo ? 'black' : '#aaaaaa'
-        }}
+        style={[styles.itineraireButton, !routeInfo && styles.disabledButton]}
         onPress={() => {
           if (routeInfo) setItineraireModalVisible(true);
         }}
@@ -455,7 +418,14 @@ const MapDepot: React.FC = () => {
         <Text style={styles.buttonText}>Voir l'itinéraire</Text>
       </TouchableOpacity>
       
-      {/* Modal for tournee selection */}
+      {/* Indicateur de chargement */}
+      {isLoading && (
+        <View style={styles.loadingIndicator}>
+          <Text style={styles.loadingText}>Chargement de l'itinéraire...</Text>
+        </View>
+      )}
+      
+      {/* Modal pour la sélection de tournée */}
       <Modal
         visible={isTourneeModalVisible}
         transparent={true}
@@ -495,7 +465,7 @@ const MapDepot: React.FC = () => {
         </View>
       </Modal>
       
-      {/* Modal for displaying depot addresses */}
+      {/* Modal pour afficher les adresses des dépôts */}
       <Modal
         visible={isAdressesModalVisible}
         transparent={true}
@@ -530,7 +500,7 @@ const MapDepot: React.FC = () => {
         </View>
       </Modal>
       
-      {/* Modal for displaying detailed route */}
+      {/* Modal pour afficher l'itinéraire détaillé */}
       <Modal
         visible={isItineraireModalVisible}
         transparent={true}
@@ -592,9 +562,15 @@ const styles = StyleSheet.create({
     height: '100%',
     width: '100%',
   },
+  placeholderMap: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f5f5f5',
+  },
   button: {
     position: 'absolute',
-    top: 10,
+    top: 50, // Ajustez cette valeur pour descendre le bouton
     left: 10,
     backgroundColor: 'black',
     padding: 10,
@@ -604,7 +580,7 @@ const styles = StyleSheet.create({
   },
   addressButton: {
     position: 'absolute',
-    top: 60,
+    top: 100, // Ajustez cette valeur pour descendre le bouton
     left: 10,
     backgroundColor: 'black',
     padding: 10,
@@ -613,17 +589,33 @@ const styles = StyleSheet.create({
   },
   itineraireButton: {
     position: 'absolute',
-    top: 110,
+    top: 150, // Ajustez cette valeur pour descendre le bouton
     left: 10,
     backgroundColor: 'black',
     padding: 10,
     borderRadius: 5,
     zIndex: 10,
   },
+  disabledButton: {
+    backgroundColor: '#aaaaaa',
+  },
   buttonText: {
     color: 'white',
     fontSize: 14,
     fontWeight: 'bold',
+  },
+  loadingIndicator: {
+    position: 'absolute',
+    bottom: 20,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    padding: 10,
+    borderRadius: 5,
+    zIndex: 20,
+  },
+  loadingText: {
+    color: 'white',
+    fontSize: 14,
   },
   modalOverlay: {
     flex: 1,

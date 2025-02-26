@@ -1,6 +1,6 @@
 import { Tabs } from 'expo-router';
 import React from 'react';
-import { Platform, StyleSheet } from 'react-native';
+import { StyleSheet } from 'react-native';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useColorScheme } from '@/hooks/useColorScheme';
 
@@ -59,22 +59,15 @@ export default function TabLayout() {
           tabBarIcon: ({ color }) => <MaterialCommunityIcons name="warehouse" size={35} color={color} />,
         }}
       />
-      {/* Vérifie que les noms ici correspondent à ceux des fichiers */}
       <Tabs.Screen
-        name="QRCodeScreen" // Assure-toi que le nom est correct
+        name="qrcode"
         options={{
-          title: 'QRCode',
-          tabBarIcon: ({ color }) => <MaterialCommunityIcons name="qrcode" size={35} color={color} />,
+          title: 'QR Code',
+          tabBarIcon: ({ color }) => <MaterialCommunityIcons name="qrcode-scan" size={35} color={color} />,
         }}
       />
-      <Tabs.Screen
-        name="ScannerScreen" // Assure-toi que le nom est correct
-        options={{
-          title: 'Scanner',
-          tabBarIcon: ({ color }) => <MaterialCommunityIcons name="barcode-scan" size={35} color={color} />,
-        }}
-      />
-    </Tabs>
+      
+      </Tabs>
   );
 }
 

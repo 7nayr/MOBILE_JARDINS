@@ -4,6 +4,8 @@ import { NavigationContainer } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import HomeScreen from '../screens/HomeScreen';
 import MapDepot from '../screens/MapDepot';
+import QRCodeReader from '../screens/QRCodeReader';
+
 
 const Tab = createBottomTabNavigator();
 
@@ -47,6 +49,17 @@ export default function AppNavigator() {
             ),
           }}
         />
+        <Tab.Screen
+          name="QRCodeReader"
+          component={QRCodeReader}
+          options={{
+            title: "Scanner",
+            tabBarIcon: ({ size }) => (
+              <MaterialCommunityIcons name="qrcode-scan" color="white" size={size} />
+            ),
+          }}
+        />
+
       </Tab.Navigator>
     </NavigationContainer>
   );
