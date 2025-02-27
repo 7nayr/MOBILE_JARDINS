@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, Alert, Platform, ScrollView, FlatList, Modal, Image } from 'react-native';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import { CameraView, useCameraPermissions, BarcodeScanningResult } from 'expo-camera';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { collection, getDocs, doc, query, where, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
@@ -40,6 +40,7 @@ export default function QrCodeScannerScreen() {
   const [foundDepot, setFoundDepot] = useState<PointDepot | null>(null);
   const [paniersFiltres, setPaniersFiltres] = useState<Panier[]>([]);
   const [debugInfo, setDebugInfo] = useState<string>('');
+  const [scanMode, setScanMode] = useState<'direct' | 'picture'>('direct');
   
   // État du QR code généré
   const [qrCodeVisible, setQrCodeVisible] = useState(false);
@@ -85,6 +86,15 @@ export default function QrCodeScannerScreen() {
       requestPermission();
     }
   }, [permission]);
+
+  // Déterminer le mode de scan en fonction de la plateforme
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      setScanMode('picture');
+    } else {
+      setScanMode('direct');
+    }
+  }, []);
 
   // Charger les paniers pour un point de dépôt spécifique
   const fetchPaniersPourDepot = async (depotId: string) => {
@@ -208,7 +218,39 @@ export default function QrCodeScannerScreen() {
       }
     }
   };
-  // Capturer une photo pour scanner le QR code
+
+  // Gestion du scan QR direct (pour mobile)
+  const handleBarCodeScanned = ({ data }: BarcodeScanningResult) => {
+    if (scanned) return;
+    
+    setScanned(true);
+    const scannedData = data.trim();
+    setQrData(scannedData);
+    
+    console.log(`📱 QR Code scanné (direct): "${scannedData}"`);
+    
+    // Rechercher le point de dépôt
+    const depot = findDepotByNumero(scannedData);
+    
+    if (depot) {
+      setFoundDepot(depot);
+      Alert.alert("Point de dépôt trouvé", `QR code correspond à: ${depot.lieu}`);
+    } else {
+      setFoundDepot(null);
+      Alert.alert("Résultat", `QR code scanné: ${scannedData}`, [
+        { text: "OK" },
+        { 
+          text: "Réessayer", 
+          onPress: () => {
+            setQrData(null);
+            setScanned(false);
+          }
+        }
+      ]);
+    }
+  };
+  
+  // Capturer une photo pour scanner le QR code (pour web)
   const takePicture = async () => {
     if (cameraRef.current) {
       setScanned(true);
@@ -231,12 +273,25 @@ export default function QrCodeScannerScreen() {
           if (Platform.OS === 'web') {
             await processQRCodeOnWeb(manipResult.base64);
           } else {
-            // Pour les plateformes mobiles
-            Alert.alert(
-              "Information",
-              "Décodage QR limité hors web. Utilisez un scanner externe ou l'application web."
-            );
-            setScanned(false);
+            // Pour les plateformes mobiles (fallback si le scan direct ne fonctionne pas)
+            try {
+              // Tenter d'utiliser l'API native pour le traitement des QR codes
+              const { scanFromURLAsync } = await import('expo-barcode-scanner');
+              const { width, height } = manipResult;
+              const scanResult = await scanFromURLAsync(manipResult.uri, ['qr']);
+              
+              if (scanResult.length > 0) {
+                const qrCodeData = scanResult[0].data;
+                handleQRCodeData(qrCodeData);
+              } else {
+                Alert.alert("Information", "Aucun QR code détecté. Veuillez réessayer.");
+                setScanned(false);
+              }
+            } catch (error) {
+              console.error("Erreur lors du traitement du QR code:", error);
+              Alert.alert("Erreur", "Impossible de scanner le QR code. Réessayez.");
+              setScanned(false);
+            }
           }
         } else {
           throw new Error("Données base64 nulles");
@@ -249,6 +304,34 @@ export default function QrCodeScannerScreen() {
     } else {
       Alert.alert("Erreur", "Caméra non disponible");
       setScanned(false);
+    }
+  };
+
+  // Traiter les données d'un QR code (utilisé par les deux méthodes)
+  const handleQRCodeData = (data: string) => {
+    const scannedData = data.trim();
+    setQrData(scannedData);
+    
+    console.log(`📱 QR Code scanné: "${scannedData}"`);
+    
+    // Rechercher le point de dépôt
+    const depot = findDepotByNumero(scannedData);
+    
+    if (depot) {
+      setFoundDepot(depot);
+      Alert.alert("Point de dépôt trouvé", `QR code correspond à: ${depot.lieu}`);
+    } else {
+      setFoundDepot(null);
+      Alert.alert("Résultat", `QR code scanné: ${scannedData}`, [
+        { text: "OK" },
+        { 
+          text: "Réessayer", 
+          onPress: () => {
+            setQrData(null);
+            setScanned(false);
+          }
+        }
+      ]);
     }
   };
 
@@ -278,30 +361,7 @@ export default function QrCodeScannerScreen() {
             const code = jsQR(imageData.data, imageData.width, imageData.height);
             
             if (code) {
-              const scannedData = code.data.trim(); // Nettoyer les espaces
-              setQrData(scannedData);
-              console.log(`📱 QR Code scanné: "${scannedData}"`);
-              
-              // Rechercher le point de dépôt
-              const depot = findDepotByNumero(scannedData);
-              
-              if (depot) {
-                setFoundDepot(depot);
-                Alert.alert("Point de dépôt trouvé", `QR code correspond à: ${depot.lieu}`);
-              } else {
-                setFoundDepot(null);
-                Alert.alert("Résultat", `QR code scanné: ${scannedData}`, [
-                  { text: "OK" },
-                  { 
-                    text: "Réessayer", 
-                    onPress: () => {
-                      setQrData(null);
-                      setScanned(false);
-                    }
-                  }
-                ]);
-              }
-              
+              handleQRCodeData(code.data);
               resolve();
             } else {
               Alert.alert("Aucun QR code détecté", "Veuillez réessayer");
@@ -360,8 +420,20 @@ export default function QrCodeScannerScreen() {
   // Déclencher le scan
   const handleScan = () => {
     if (!scanned) {
-      takePicture();
+      if (scanMode === 'picture') {
+        takePicture();
+      } else {
+        // Le scan est géré par onBarCodeScanned sur la vue caméra
+        // Nous activons juste le mode scan
+        setScanned(false);
+      }
     }
+  };
+
+  // Basculer entre les modes de scan
+  const toggleScanMode = () => {
+    setScanMode(prev => prev === 'direct' ? 'picture' : 'direct');
+    setScanned(false);
   };
 
   // Réinitialiser le scan
@@ -417,8 +489,6 @@ export default function QrCodeScannerScreen() {
       </View>
     );
   };
-
-// Cette fonction a été déplacée et est déjà définie plus haut dans le code
 
   // Modal pour afficher le QR code du panier
   const renderQrCodeModal = () => {
@@ -523,11 +593,20 @@ export default function QrCodeScannerScreen() {
             ref={cameraRef}
             style={styles.camera}
             facing="back"
+            onBarcodeScanned={scanMode === 'direct' && !scanned ? handleBarCodeScanned : undefined}
+            barcodeScannerSettings={{
+              barcodeTypes: ['qr'],
+            }}
           />
           
           <View style={styles.overlay}>
             <Text style={styles.overlayText}>
               Scannez le QR code du point de dépôt
+            </Text>
+            <Text style={styles.overlaySubText}>
+              {scanMode === 'direct' 
+                ? "Placez le QR code dans le cadre" 
+                : "Appuyez sur Scanner pour prendre une photo"}
             </Text>
           </View>
           
@@ -538,9 +617,27 @@ export default function QrCodeScannerScreen() {
               disabled={scanned}
             >
               <Text style={styles.buttonText}>
-                {scanned ? "Scan en cours..." : "Scanner un QR Code"}
+                {scanned 
+                  ? "Scan en cours..." 
+                  : scanMode === 'direct' ? "Scanner en direct" : "Prendre une photo"
+                }
               </Text>
             </TouchableOpacity>
+            
+            {Platform.OS !== 'web' && (
+              <TouchableOpacity 
+                style={[styles.button, styles.switchButton]} 
+                onPress={toggleScanMode}
+                disabled={scanned}
+              >
+                <Text style={styles.buttonText}>
+                  {scanMode === 'direct' 
+                    ? "Passer au mode photo" 
+                    : "Passer au scan en direct"
+                  }
+                </Text>
+              </TouchableOpacity>
+            )}
             
             <TouchableOpacity 
               style={[styles.button, styles.secondaryButton]} 
@@ -549,14 +646,6 @@ export default function QrCodeScannerScreen() {
               <Text style={styles.buttonText}>Saisir un numéro manuellement</Text>
             </TouchableOpacity>
           </View>
-          
-          {Platform.OS !== 'web' && (
-            <View style={styles.disclaimer}>
-              <Text style={styles.disclaimerText}>
-                Fonctionnalité de décodage QR limitée hors web
-              </Text>
-            </View>
-          )}
         </>
       ) : (
         <ScrollView contentContainerStyle={styles.resultContainer}>
@@ -604,9 +693,7 @@ export default function QrCodeScannerScreen() {
       {/* Modal pour afficher le QR code du panier */}
       {renderQrCodeModal()}
     </View>
-
   );
-
 }
 
 // Styles
@@ -634,6 +721,12 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     textAlign: 'center',
   },
+  overlaySubText: {
+    color: '#FFA500',
+    fontSize: 14,
+    textAlign: 'center',
+    marginTop: 10,
+  },
   buttonContainer: {
     position: 'absolute',
     bottom: 0,
@@ -654,6 +747,9 @@ const styles = StyleSheet.create({
   secondaryButton: {
     backgroundColor: '#2196F3', // Bleu pour le bouton secondaire
   },
+  switchButton: {
+    backgroundColor: '#FF9800', // Orange pour le bouton de changement de mode
+  },
   buttonText: {
     color: 'white',
     fontSize: 16,
@@ -665,20 +761,6 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     textAlign: 'center',
     padding: 20,
-  },
-  disclaimer: {
-    position: 'absolute',
-    top: 40,
-    left: 0,
-    right: 0,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    padding: 10,
-    alignItems: 'center',
-  },
-  disclaimerText: {
-    color: '#FFA500',
-    fontSize: 12,
-    textAlign: 'center',
   },
   resultContainer: {
     padding: 20,
