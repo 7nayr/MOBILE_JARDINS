@@ -48,41 +48,75 @@ export default function QrCodeScannerScreen() {
   const [panierSelectionne, setPanierSelectionne] = useState<Panier | null>(null);
   const [panierQrValue, setPanierQrValue] = useState<string>('');
   
-  // Configuration des notifications uniquement pour les plateformes natives
+  // Configuration avancée des notifications
   useEffect(() => {
     const configureNotifications = async () => {
-      // Sur les plateformes natives uniquement (iOS, Android)
       if (Platform.OS !== 'web') {
-        // Configurer le gestionnaire de notifications
+        // Configuration spéciale pour que les notifications apparaissent au milieu de l'écran sur iOS
         Notifications.setNotificationHandler({
           handleNotification: async () => ({
             shouldShowAlert: true,
             shouldPlaySound: true,
             shouldSetBadge: true,
+            // Ces options améliorent la visibilité sur iOS
+            ios: {
+              presentAlert: true,
+              presentBadge: true,
+              presentSound: true,
+            }
           }),
         });
         
-        // Configuration spécifique pour Android
+        // Configuration spécifique pour iOS
+        if (Platform.OS === 'ios') {
+          try {
+            // Configuration avancée des notifications iOS
+            await Notifications.setNotificationCategoryAsync('livraison', [
+              {
+                identifier: 'voir',
+                buttonTitle: 'Voir détails',
+                options: {
+                  opensAppToForeground: true,
+                },
+              },
+            ]);
+          } catch (error) {
+            console.log('Erreur lors de la configuration iOS:', error);
+          }
+        }
+
+        // Configuration pour Android
         if (Platform.OS === 'android') {
           try {
-            await Notifications.setNotificationChannelAsync('default', {
-              name: 'default',
-              importance: Notifications.AndroidImportance.MAX,
+            await Notifications.setNotificationChannelAsync('livraison', {
+              name: 'Livraisons',
+              importance: Notifications.AndroidImportance.HIGH,
               vibrationPattern: [0, 250, 250, 250],
-              lightColor: '#FF231F7C',
+              lightColor: '#4caf50',
+              sound: 'default',
+              enableVibrate: true,
+              showBadge: true,
             });
           } catch (error) {
             console.log('Erreur lors de la configuration du canal Android:', error);
           }
         }
 
-        // Demander les permissions
+        // Demander les permissions avec options avancées
         try {
           const { status: existingStatus } = await Notifications.getPermissionsAsync();
           let finalStatus = existingStatus;
           
           if (existingStatus !== 'granted') {
-            const { status } = await Notifications.requestPermissionsAsync();
+            const { status } = await Notifications.requestPermissionsAsync({
+              ios: {
+                allowAlert: true,
+                allowBadge: true,
+                allowSound: true,
+                // Force l'affichage des alertes au centre sur iOS
+                provideAppNotificationSettings: true,
+              },
+            });
             finalStatus = status;
           }
           
@@ -96,6 +130,15 @@ export default function QrCodeScannerScreen() {
     };
 
     configureNotifications();
+
+    // Configuration de la gestion des notifications reçues
+    const subscription = Notifications.addNotificationReceivedListener(notification => {
+      console.log('Notification reçue:', notification);
+    });
+
+    return () => {
+      subscription.remove();
+    };
   }, []);
 
   // Charger tous les points de dépôt depuis Firestore
@@ -147,7 +190,7 @@ export default function QrCodeScannerScreen() {
     }
   }, []);
 
-  // Fonction pour envoyer une notification - version corrigée
+  // Fonction pour envoyer une notification - optimisée pour iOS
   const envoyerNotificationPush = async (titre: string, message: string) => {
     // Sur le web, nous n'utilisons pas les notifications Expo
     if (Platform.OS === 'web') {
@@ -157,14 +200,52 @@ export default function QrCodeScannerScreen() {
     
     // Pour les plateformes natives (iOS, Android)
     try {
-      await Notifications.scheduleNotificationAsync({
+      const identifier = await Notifications.scheduleNotificationAsync({
         content: {
           title: titre,
           body: message,
+          // Configuration spéciale pour iOS (pour que la notification apparaisse au milieu)
+          data: { 
+            type: 'livraison',
+            panierId: panierSelectionne?.id || '',
+            depotId: foundDepot?.id || ''
+          },
+          // Options spécifiques à la plateforme
+          sound: 'default',
+          badge: 1,
+          // Configuration améliorée pour iOS
+          ...(Platform.OS === 'ios' ? {
+            categoryIdentifier: 'livraison',
+            // Force l'affichage comme alerte au milieu de l'écran sur iOS
+            _displayInForeground: true,
+          } : {}),
+          // Configuration spécifique pour Android
+          ...(Platform.OS === 'android' ? {
+            channelId: 'livraison',
+            color: '#4caf50',
+            priority: 'high',
+          } : {})
         },
         trigger: null, // Notification immédiate
       });
-      console.log("✅ Notification native envoyée");
+      
+      console.log("✅ Notification native envoyée, ID:", identifier);
+      
+      // Sur iOS, pour forcer une notification immédiate même si l'app est en premier plan
+      if (Platform.OS === 'ios') {
+        // Forcer l'affichage de la notification
+        await Notifications.presentNotificationAsync({
+          title: titre,
+          body: message,
+          data: { 
+            type: 'livraison',
+            panierId: panierSelectionne?.id || '',
+            depotId: foundDepot?.id || ''
+          },
+          sound: true,
+          categoryIdentifier: 'livraison',
+        });
+      }
     } catch (error) {
       console.error("❌ Erreur lors de l'envoi de la notification:", error);
     }
@@ -285,7 +366,7 @@ export default function QrCodeScannerScreen() {
       // Ajouter la notification à Firestore
       await addDoc(collection(db, "notifications"), notificationData);
       
-      // Envoyer la notification push (uniquement sur mobile)
+      // Envoyer la notification push avec des options améliorées
       await envoyerNotificationPush(notificationData.titre, notificationData.message);
 
       // Mettre à jour l'état local des paniers

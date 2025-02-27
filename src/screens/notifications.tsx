@@ -8,7 +8,9 @@ import {
   RefreshControl,
   ActivityIndicator,
   Alert,
-  Platform
+  Platform,
+  SafeAreaView,
+  StatusBar
 } from 'react-native';
 import { collection, query, getDocs, orderBy, updateDoc, doc, where, Timestamp } from 'firebase/firestore';
 import { db } from '../firebase/config';
@@ -199,18 +201,16 @@ export default function NotificationsScreen({ navigation }: any) {
       }}
       style={styles.notificationTouchable}
     >
-      <Card 
-        style={[
-          styles.notificationCard, 
-          !item.lu && styles.nonLuCard
-        ]}
-      >
+      <Card style={[
+        styles.notificationCard, 
+        !item.lu && styles.nonLuCard
+      ]}>
         <Card.Content style={styles.cardContent}>
           <View style={styles.iconContainer}>
             <Text style={styles.notificationIcon}>{getNotificationIcon(item.type)}</Text>
           </View>
           
-          <View style={styles.contentContainer}>
+          <View style={styles.notificationContent}>
             <View style={styles.headerContainer}>
               <Text style={styles.notificationTitle}>{item.titre}</Text>
               {!item.lu && (
@@ -226,49 +226,19 @@ export default function NotificationsScreen({ navigation }: any) {
     </TouchableOpacity>
   );
 
-  return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Notifications</Text>
-        <View style={styles.headerActions}>
-          {getNonLuesCount() > 0 && (
-            <TouchableOpacity 
-              style={styles.markAllButton}
-              onPress={marquerToutesLues}
-            >
-              <Text style={styles.markAllButtonText}>Tout marquer comme lu</Text>
-            </TouchableOpacity>
-          )}
-          <TouchableOpacity 
-            style={styles.refreshButton}
-            onPress={fetchNotifications}
-          >
-            <Text style={styles.refreshButtonText}>🔄</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {loading && !refreshing ? (
+  // Rendu du contenu principal en fonction de l'état
+  const renderContent = () => {
+    if (loading && !refreshing) {
+      return (
         <View style={styles.loaderContainer}>
           <ActivityIndicator size="large" color="#4caf50" />
           <Text style={styles.loadingText}>Chargement des notifications...</Text>
         </View>
-      ) : notifications.length > 0 ? (
-        <FlatList
-          data={notifications}
-          renderItem={renderNotification}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.listContainer}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              colors={['#4caf50']}
-              tintColor="#4caf50"
-            />
-          }
-        />
-      ) : (
+      );
+    }
+    
+    if (notifications.length === 0) {
+      return (
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyText}>Aucune notification</Text>
           <TouchableOpacity 
@@ -278,12 +248,67 @@ export default function NotificationsScreen({ navigation }: any) {
             <Text style={styles.buttonText}>Actualiser</Text>
           </TouchableOpacity>
         </View>
-      )}
-    </View>
+      );
+    }
+    
+    // Si nous avons des notifications, retourner la FlatList
+    return (
+      <FlatList
+        data={notifications}
+        renderItem={renderNotification}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={styles.listContainer}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            colors={['#4caf50']}
+            tintColor="#4caf50"
+          />
+        }
+      />
+    );
+  };
+
+  // Rendu principal
+  return (
+    <SafeAreaView style={styles.safeArea}>
+      <StatusBar barStyle="light-content" backgroundColor="#1e1e1e" />
+      
+      <View style={styles.container}>
+        <View style={styles.header}>
+          <Text style={styles.title}>Notifications</Text>
+          <View style={styles.headerActions}>
+            {getNonLuesCount() > 0 && (
+              <TouchableOpacity 
+                style={styles.markAllButton}
+                onPress={marquerToutesLues}
+              >
+                <Text style={styles.markAllButtonText}>Tout marquer comme lu</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity 
+              style={styles.refreshButton}
+              onPress={fetchNotifications}
+            >
+              <Text style={styles.refreshButtonText}>🔄</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+        
+        <View style={styles.contentContainer}>
+          {renderContent()}
+        </View>
+      </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#121212',
+  },
   container: {
     flex: 1,
     backgroundColor: '#121212',
@@ -325,8 +350,12 @@ const styles = StyleSheet.create({
     color: 'white',
     fontWeight: 'bold',
   },
+  contentContainer: {
+    flex: 1,
+  },
   listContainer: {
     padding: 16,
+    paddingBottom: 50, // Espace en bas pour éviter que la dernière notification soit cachée
   },
   notificationTouchable: {
     marginBottom: 12,
@@ -349,7 +378,7 @@ const styles = StyleSheet.create({
   notificationIcon: {
     fontSize: 24,
   },
-  contentContainer: {
+  notificationContent: {
     flex: 1,
   },
   headerContainer: {
