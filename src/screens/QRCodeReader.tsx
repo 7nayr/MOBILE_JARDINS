@@ -2,10 +2,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, Alert, Platform, ScrollView, FlatList, Modal, Image } from 'react-native';
 import { CameraView, useCameraPermissions, BarcodeScanningResult } from 'expo-camera';
 import * as ImageManipulator from 'expo-image-manipulator';
-import { collection, getDocs, doc, query, where, updateDoc } from 'firebase/firestore';
+import * as Notifications from 'expo-notifications';
+import { collection, getDocs, doc, query, where, updateDoc, addDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { Card, Title, Paragraph, Badge } from 'react-native-paper';
-import QRCode from 'react-native-qrcode-svg'; // Assurez-vous d'avoir installé cette dépendance
+import QRCode from 'react-native-qrcode-svg';
 
 // Interface pour les points de dépôt
 interface PointDepot {
@@ -47,6 +48,56 @@ export default function QrCodeScannerScreen() {
   const [panierSelectionne, setPanierSelectionne] = useState<Panier | null>(null);
   const [panierQrValue, setPanierQrValue] = useState<string>('');
   
+  // Configuration des notifications uniquement pour les plateformes natives
+  useEffect(() => {
+    const configureNotifications = async () => {
+      // Sur les plateformes natives uniquement (iOS, Android)
+      if (Platform.OS !== 'web') {
+        // Configurer le gestionnaire de notifications
+        Notifications.setNotificationHandler({
+          handleNotification: async () => ({
+            shouldShowAlert: true,
+            shouldPlaySound: true,
+            shouldSetBadge: true,
+          }),
+        });
+        
+        // Configuration spécifique pour Android
+        if (Platform.OS === 'android') {
+          try {
+            await Notifications.setNotificationChannelAsync('default', {
+              name: 'default',
+              importance: Notifications.AndroidImportance.MAX,
+              vibrationPattern: [0, 250, 250, 250],
+              lightColor: '#FF231F7C',
+            });
+          } catch (error) {
+            console.log('Erreur lors de la configuration du canal Android:', error);
+          }
+        }
+
+        // Demander les permissions
+        try {
+          const { status: existingStatus } = await Notifications.getPermissionsAsync();
+          let finalStatus = existingStatus;
+          
+          if (existingStatus !== 'granted') {
+            const { status } = await Notifications.requestPermissionsAsync();
+            finalStatus = status;
+          }
+          
+          if (finalStatus !== 'granted') {
+            console.log('Permission de notification non accordée');
+          }
+        } catch (error) {
+          console.log('Erreur lors de la demande de permissions:', error);
+        }
+      }
+    };
+
+    configureNotifications();
+  }, []);
+
   // Charger tous les points de dépôt depuis Firestore
   useEffect(() => {
     const fetchPointsDepot = async () => {
@@ -95,6 +146,29 @@ export default function QrCodeScannerScreen() {
       setScanMode('direct');
     }
   }, []);
+
+  // Fonction pour envoyer une notification - version corrigée
+  const envoyerNotificationPush = async (titre: string, message: string) => {
+    // Sur le web, nous n'utilisons pas les notifications Expo
+    if (Platform.OS === 'web') {
+      console.log("✅ Message de notification (web):", titre, message);
+      return;
+    }
+    
+    // Pour les plateformes natives (iOS, Android)
+    try {
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: titre,
+          body: message,
+        },
+        trigger: null, // Notification immédiate
+      });
+      console.log("✅ Notification native envoyée");
+    } catch (error) {
+      console.error("❌ Erreur lors de l'envoi de la notification:", error);
+    }
+  };
 
   // Charger les paniers pour un point de dépôt spécifique
   const fetchPaniersPourDepot = async (depotId: string) => {
@@ -183,11 +257,36 @@ export default function QrCodeScannerScreen() {
       // Référence au document du panier dans Firestore
       const panierRef = doc(db, "paniers", panierId);
 
+      const dateDistribution = new Date();
+      
       // Mettre à jour le statut dans Firestore
       await updateDoc(panierRef, {
         statut: "livré",
-        dateLivraison: new Date() // Ajouter un timestamp de livraison optionnel
+        dateLivraison: dateDistribution // Ajouter un timestamp de livraison
       });
+
+      // Récupérer les infos du panier
+      const panierInfo = panierSelectionne || 
+        paniersFiltres.find(p => p.id === panierId) || 
+        { type: "Panier", clientId: "inconnu" };
+
+      // Créer une notification dans Firestore
+      const notificationData = {
+        titre: "Panier distribué",
+        message: `Le ${panierInfo.type} pour le client ${panierInfo.clientId} a été distribué au dépôt ${foundDepot?.lieu || 'inconnu'}`,
+        date: dateDistribution,
+        type: "livraison",
+        panierId: panierId,
+        depotId: foundDepot?.id || '',
+        lu: false,
+        userId: "current-user-id" // À remplacer par l'ID de l'utilisateur connecté
+      };
+      
+      // Ajouter la notification à Firestore
+      await addDoc(collection(db, "notifications"), notificationData);
+      
+      // Envoyer la notification push (uniquement sur mobile)
+      await envoyerNotificationPush(notificationData.titre, notificationData.message);
 
       // Mettre à jour l'état local des paniers
       setPaniersFiltres(prev => 
@@ -277,7 +376,6 @@ export default function QrCodeScannerScreen() {
             try {
               // Tenter d'utiliser l'API native pour le traitement des QR codes
               const { scanFromURLAsync } = await import('expo-barcode-scanner');
-              const { width, height } = manipResult;
               const scanResult = await scanFromURLAsync(manipResult.uri, ['qr']);
               
               if (scanResult.length > 0) {

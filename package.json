@@ -28,12 +28,14 @@
     "expo-blur": "~14.0.3",
     "expo-camera": "~16.0.17",
     "expo-constants": "~17.0.7",
+    "expo-file-system": "~18.0.11",
     "expo-font": "~13.0.4",
     "expo-haptics": "~14.0.1",
     "expo-image-manipulator": "~13.0.6",
     "expo-image-picker": "~16.0.6",
     "expo-linking": "~7.0.5",
     "expo-media-library": "~17.0.6",
+    "expo-notifications": "^0.29.13",
     "expo-router": "~4.0.17",
     "expo-sharing": "~13.0.1",
     "expo-splash-screen": "~0.29.22",
@@ -62,8 +64,7 @@
     "react-native-web": "~0.19.13",
     "react-native-webview": "13.12.5",
     "react-qr-reader": "^3.0.0-beta-1",
-    "vision-camera-code-scanner": "^0.2.0",
-    "expo-file-system": "~18.0.11"
+    "vision-camera-code-scanner": "^0.2.0"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
