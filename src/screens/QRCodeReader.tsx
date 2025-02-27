@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, Alert, Platform, ScrollView, FlatList } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, Alert, Platform, ScrollView, FlatList, Modal, Image } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImageManipulator from 'expo-image-manipulator';
-import { collection, getDocs, doc, query, where } from 'firebase/firestore';
+import { collection, getDocs, doc, query, where, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
-import { Card, Title, Paragraph } from 'react-native-paper';
+import { Card, Title, Paragraph, Badge } from 'react-native-paper';
+import QRCode from 'react-native-qrcode-svg'; // Assurez-vous d'avoir installé cette dépendance
 
 // Interface pour les points de dépôt
 interface PointDepot {
@@ -38,8 +39,13 @@ export default function QrCodeScannerScreen() {
   const [loading, setLoading] = useState(true);
   const [foundDepot, setFoundDepot] = useState<PointDepot | null>(null);
   const [paniersFiltres, setPaniersFiltres] = useState<Panier[]>([]);
-  const [debugInfo, setDebugInfo] = useState<string>(''); // Pour le débogage
-
+  const [debugInfo, setDebugInfo] = useState<string>('');
+  
+  // État du QR code généré
+  const [qrCodeVisible, setQrCodeVisible] = useState(false);
+  const [panierSelectionne, setPanierSelectionne] = useState<Panier | null>(null);
+  const [panierQrValue, setPanierQrValue] = useState<string>('');
+  
   // Charger tous les points de dépôt depuis Firestore
   useEffect(() => {
     const fetchPointsDepot = async () => {
@@ -61,11 +67,6 @@ export default function QrCodeScannerScreen() {
         });
 
         console.log("🔥 Points de dépôt chargés :", pointsDepotList.length);
-        // Log pour déboguer
-        pointsDepotList.forEach(depot => {
-          console.log(`Dépôt ${depot.id} (${depot.lieu}): numeros=${JSON.stringify(depot.numeros_depot)}`);
-        });
-        
         setPointsDepot(pointsDepotList);
       } catch (error) {
         console.error("❌ Erreur lors du chargement des points de dépôt :", error);
@@ -107,7 +108,7 @@ export default function QrCodeScannerScreen() {
     }
   };
 
-  // Cherche le point de dépôt correspondant au numéro scanné - FONCTION AMÉLIORÉE
+  // Cherche le point de dépôt correspondant au numéro scanné
   const findDepotByNumero = (numeroScan: string) => {
     // Normaliser le numéro scanné (supprimer les espaces et convertir en chaîne)
     const numeroScanNormalise = String(numeroScan).trim();
@@ -143,6 +144,49 @@ export default function QrCodeScannerScreen() {
     }
   };
 
+  // Générer un QR code pour un panier
+  const genererQrCodePanier = (panier: Panier) => {
+    setPanierSelectionne(panier);
+    
+    // Créer un objet avec les informations essentielles du panier
+    const panierInfo = {
+      id: panier.id,
+      type: panier.type,
+      clientId: panier.clientId,
+      depotId: foundDepot?.id || '',
+      depotNom: foundDepot?.lieu || '',
+      composition: panier.composition,
+      statut: panier.statut
+    };
+    
+    // Convertir en JSON pour le QR code
+    const qrValue = JSON.stringify(panierInfo);
+    setPanierQrValue(qrValue);
+    
+    // Afficher le modal avec le QR code
+    setQrCodeVisible(true);
+  };
+
+  // Marquer un panier comme distribué (simulation locale)
+  const marquerPanierDistribue = (panierId: string) => {
+    // Mettre à jour uniquement la liste locale
+    setPaniersFiltres(prev => 
+      prev.map(p => 
+        p.id === panierId ? {...p, statut: "livré"} : p
+      )
+    );
+
+    // Mettre à jour le panier sélectionné
+    if (panierSelectionne) {
+      setPanierSelectionne({...panierSelectionne, statut: "livré"});
+    }
+
+    Alert.alert("Succès", "Panier marqué comme distribué!");
+    
+    // Fermer le modal QR code
+    setQrCodeVisible(false);
+    setPanierSelectionne(null);
+  };
   // Capturer une photo pour scanner le QR code
   const takePicture = async () => {
     if (cameraRef.current) {
@@ -264,7 +308,7 @@ export default function QrCodeScannerScreen() {
     }
   };
 
-  // Entrée manuelle d'un code QR (fonctionnalité ajoutée)
+  // Entrée manuelle d'un code QR
   const handleManualInput = () => {
     Alert.prompt(
       "Entrer un numéro de dépôt",
@@ -306,32 +350,122 @@ export default function QrCodeScannerScreen() {
     setFoundDepot(null);
     setPaniersFiltres([]);
     setDebugInfo('');
+    setPanierSelectionne(null);
+    setQrCodeVisible(false);
   };
 
-  // Afficher les paniers du dépôt
+  // Afficher les paniers du dépôt avec des boutons pour générer des QR codes
   const renderPaniers = () => {
     return (
       <View style={styles.paniersContainer}>
-        <Text style={styles.paniersTitle}>🚚 Paniers du dépôt</Text>
+        <Text style={styles.paniersTitle}>🚚 Paniers disponibles</Text>
         {paniersFiltres.length > 0 ? (
           <FlatList
             data={paniersFiltres}
             keyExtractor={(panier) => panier.id}
             renderItem={({ item: panier }) => (
-              <Card style={styles.panierCard}>
-                <Card.Content>
-                  <Title style={styles.panierType}>{panier.type}</Title>
-                  <Paragraph style={styles.panierText}>📦 {panier.composition.join(", ")}</Paragraph>
-                  <Paragraph style={styles.panierStatus}>🔹 {panier.statut}</Paragraph>
-                  <Paragraph style={styles.panierClient}>👤 Client : {panier.clientId}</Paragraph>
-                </Card.Content>
-              </Card>
+              <TouchableOpacity 
+                onPress={() => genererQrCodePanier(panier)}
+                style={styles.panierTouchable}
+              >
+                <Card style={[
+                  styles.panierCard, 
+                  panier.statut === 'livré' ? styles.panierLivre : null
+                ]}>
+                  <Card.Content>
+                    <View style={styles.panierHeader}>
+                      <Title style={styles.panierType}>{panier.type}</Title>
+                      {panier.statut === 'livré' && (
+                        <Badge style={styles.panierBadge}>Livré</Badge>
+                      )}
+                    </View>
+                    <Paragraph style={styles.panierText}>📦 {panier.composition.join(", ")}</Paragraph>
+                    <Paragraph style={styles.panierStatus}>🔹 {panier.statut}</Paragraph>
+                    <Paragraph style={styles.panierClient}>👤 Client : {panier.clientId}</Paragraph>
+                    <Paragraph style={styles.panierAction}>
+                      📲 Appuyez pour générer un QR code
+                    </Paragraph>
+                  </Card.Content>
+                </Card>
+              </TouchableOpacity>
             )}
           />
         ) : (
           <Text style={styles.noPaniersText}>Aucun panier trouvé pour ce dépôt</Text>
         )}
       </View>
+    );
+  };
+
+// Cette fonction a été déplacée et est déjà définie plus haut dans le code
+
+  // Modal pour afficher le QR code du panier
+  const renderQrCodeModal = () => {
+    return (
+      <Modal
+        visible={qrCodeVisible}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setQrCodeVisible(false)}
+      >
+        <View style={styles.modalContainer}>
+          <View style={styles.qrCodeContainer}>
+            <Text style={styles.qrCodeTitle}>
+              QR Code du panier
+            </Text>
+            
+            {panierSelectionne && (
+              <>
+                <Text style={styles.qrCodePanierInfo}>
+                  {panierSelectionne.type} - Client: {panierSelectionne.clientId}
+                </Text>
+                
+                <View style={styles.qrWrapper}>
+                  {Platform.OS === 'web' ? (
+                    // Solution pour le web
+                    <Image 
+                      source={{
+                        uri: `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(panierQrValue)}`
+                      }}
+                      style={styles.qrImage}
+                    />
+                  ) : (
+                    // Solution pour mobile avec react-native-qrcode-svg
+                    <QRCode
+                      value={panierQrValue}
+                      size={200}
+                      backgroundColor="white"
+                      color="black"
+                    />
+                  )}
+                </View>
+                
+                <Text style={styles.qrInstructions}>
+                  Montrez ce QR code au client ou scannez-le pour valider la livraison
+                </Text>
+                
+                <View style={styles.qrButtonsContainer}>
+                  <TouchableOpacity 
+                    style={styles.qrButton}
+                    onPress={() => setQrCodeVisible(false)}
+                  >
+                    <Text style={styles.qrButtonText}>Fermer</Text>
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity 
+                    style={[styles.qrButton, styles.qrValidateButton]}
+                    onPress={() => marquerPanierDistribue(panierSelectionne.id)}
+                  >
+                    <Text style={styles.qrButtonText}>
+                      Marquer comme distribué
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
     );
   };
 
@@ -370,6 +504,12 @@ export default function QrCodeScannerScreen() {
             facing="back"
           />
           
+          <View style={styles.overlay}>
+            <Text style={styles.overlayText}>
+              Scannez le QR code du point de dépôt
+            </Text>
+          </View>
+          
           <View style={styles.buttonContainer}>
             <TouchableOpacity 
               style={styles.button} 
@@ -381,7 +521,6 @@ export default function QrCodeScannerScreen() {
               </Text>
             </TouchableOpacity>
             
-            {/* Bouton d'entrée manuelle (nouvelle fonctionnalité) */}
             <TouchableOpacity 
               style={[styles.button, styles.secondaryButton]} 
               onPress={handleManualInput}
@@ -400,15 +539,13 @@ export default function QrCodeScannerScreen() {
         </>
       ) : (
         <ScrollView contentContainerStyle={styles.resultContainer}>
-          <Text style={styles.resultTitle}>QR Code scanné</Text>
-          <Text style={styles.qrValue}>{qrData}</Text>
+          <Text style={styles.resultTitle}>Point de dépôt scanné</Text>
           
           {foundDepot ? (
             <>
               <Card style={styles.depotCard}>
                 <Card.Content>
-                  <Title style={styles.depotTitle}>Point de dépôt</Title>
-                  <Paragraph style={styles.depotLieu}>{foundDepot.lieu}</Paragraph>
+                  <Title style={styles.depotTitle}>{foundDepot.lieu}</Title>
                   <Paragraph style={styles.depotInfo}>Adresse: {foundDepot.adresse}</Paragraph>
                   <Paragraph style={styles.depotInfo}>Horaires: {foundDepot.horaires}</Paragraph>
                   <View style={styles.depotNumeroContainer}>
@@ -428,7 +565,6 @@ export default function QrCodeScannerScreen() {
                 Aucun point de dépôt correspondant au numéro {qrData}
               </Text>
               
-              {/* Informations de débogage */}
               {__DEV__ && debugInfo && (
                 <View style={styles.debugContainer}>
                   <Text style={styles.debugTitle}>Informations de débogage:</Text>
@@ -443,8 +579,13 @@ export default function QrCodeScannerScreen() {
           </TouchableOpacity>
         </ScrollView>
       )}
+      
+      {/* Modal pour afficher le QR code du panier */}
+      {renderQrCodeModal()}
     </View>
+
   );
+
 }
 
 // Styles
@@ -452,12 +593,25 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#121212',
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   camera: {
     flex: 1,
     width: '100%',
+  },
+  overlay: {
+    position: 'absolute',
+    top: '20%',
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+  },
+  overlayText: {
+    color: 'white',
+    fontSize: 18,
+    fontWeight: 'bold',
+    textAlign: 'center',
   },
   buttonContainer: {
     position: 'absolute',
@@ -489,6 +643,7 @@ const styles = StyleSheet.create({
     fontSize: 18,
     marginBottom: 20,
     textAlign: 'center',
+    padding: 20,
   },
   disclaimer: {
     position: 'absolute',
@@ -515,15 +670,6 @@ const styles = StyleSheet.create({
     color: 'white',
     marginBottom: 10,
   },
-  qrValue: {
-    fontSize: 18,
-    color: '#4caf50',
-    marginBottom: 20,
-    padding: 10,
-    backgroundColor: 'rgba(76, 175, 80, 0.1)',
-    borderRadius: 5,
-    overflow: 'hidden',
-  },
   depotCard: {
     width: '100%',
     backgroundColor: '#2c2c2c',
@@ -536,12 +682,6 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#4caf50',
     marginBottom: 5,
-  },
-  depotLieu: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: 'white',
-    marginBottom: 10,
   },
   depotInfo: {
     fontSize: 16,
@@ -605,14 +745,29 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     textAlign: 'center',
   },
+  panierTouchable: {
+    marginBottom: 10,
+  },
   panierCard: {
     backgroundColor: '#2c2c2c',
-    marginBottom: 10,
     borderRadius: 10,
+  },
+  panierLivre: {
+    backgroundColor: '#1b5e20', // Vert foncé pour les paniers livrés
+    opacity: 0.8,
+  },
+  panierHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   panierType: {
     color: '#4caf50',
     fontSize: 18,
+  },
+  panierBadge: {
+    backgroundColor: '#4caf50',
+    color: 'white',
   },
   panierText: {
     color: '#e0e0e0',
@@ -625,9 +780,81 @@ const styles = StyleSheet.create({
     color: '#e0e0e0',
     marginTop: 5,
   },
+  panierAction: {
+    color: '#FFA500',
+    marginTop: 10,
+    textAlign: 'center',
+    fontWeight: 'bold',
+  },
   noPaniersText: {
     color: '#ff5252',
     textAlign: 'center',
     fontSize: 16,
+  },
+  
+  // Styles pour le modal QR code
+  modalContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.8)',
+    padding: 20,
+  },
+  qrCodeContainer: {
+    backgroundColor: '#2c2c2c',
+    borderRadius: 15,
+    padding: 20,
+    width: '90%',
+    maxWidth: 400,
+    alignItems: 'center',
+  },
+  qrCodeTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: 'white',
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  qrCodePanierInfo: {
+    fontSize: 16,
+    color: '#4caf50',
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  qrWrapper: {
+    backgroundColor: 'white',
+    padding: 15,
+    borderRadius: 10,
+    marginVertical: 20,
+  },
+  qrImage: {
+    width: 200,
+    height: 200,
+  },
+  qrInstructions: {
+    color: '#e0e0e0',
+    textAlign: 'center',
+    fontSize: 14,
+    marginBottom: 20,
+  },
+  qrButtonsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    width: '100%',
+  },
+  qrButton: {
+    backgroundColor: '#2196F3',
+    padding: 12,
+    borderRadius: 8,
+    width: '45%',
+    alignItems: 'center',
+  },
+  qrValidateButton: {
+    backgroundColor: '#4caf50',
+  },
+  qrButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 14,
   }
 });
