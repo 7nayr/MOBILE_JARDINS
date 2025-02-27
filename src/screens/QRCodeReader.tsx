@@ -167,25 +167,46 @@ export default function QrCodeScannerScreen() {
     setQrCodeVisible(true);
   };
 
-  // Marquer un panier comme distribué (simulation locale)
-  const marquerPanierDistribue = (panierId: string) => {
-    // Mettre à jour uniquement la liste locale
-    setPaniersFiltres(prev => 
-      prev.map(p => 
-        p.id === panierId ? {...p, statut: "livré"} : p
-      )
-    );
+  // Marquer un panier comme distribué dans la base de données
+  const marquerPanierDistribue = async (panierId: string) => {
+    try {
+      // Référence au document du panier dans Firestore
+      const panierRef = doc(db, "paniers", panierId);
 
-    // Mettre à jour le panier sélectionné
-    if (panierSelectionne) {
-      setPanierSelectionne({...panierSelectionne, statut: "livré"});
+      // Mettre à jour le statut dans Firestore
+      await updateDoc(panierRef, {
+        statut: "livré",
+        dateLivraison: new Date() // Ajouter un timestamp de livraison optionnel
+      });
+
+      // Mettre à jour l'état local des paniers
+      setPaniersFiltres(prev => 
+        prev.map(p => 
+          p.id === panierId ? {...p, statut: "livré"} : p
+        )
+      );
+
+      // Mettre à jour le panier sélectionné
+      if (panierSelectionne) {
+        setPanierSelectionne({...panierSelectionne, statut: "livré"});
+      }
+
+      Alert.alert("Succès", "Panier marqué comme distribué!");
+      
+      // Fermer le modal QR code
+      setQrCodeVisible(false);
+      setPanierSelectionne(null);
+    } catch (error) {
+      console.error("Erreur lors de la mise à jour du statut du panier:", error);
+      
+      // Gestion des erreurs
+      if (error instanceof Error) {
+        Alert.alert(
+          "Erreur de mise à jour", 
+          `Une erreur est survenue : ${error.message}`
+        );
+      }
     }
-
-    Alert.alert("Succès", "Panier marqué comme distribué!");
-    
-    // Fermer le modal QR code
-    setQrCodeVisible(false);
-    setPanierSelectionne(null);
   };
   // Capturer une photo pour scanner le QR code
   const takePicture = async () => {
