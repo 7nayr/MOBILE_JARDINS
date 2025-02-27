@@ -66,6 +66,8 @@ export default function TabLayout() {
           tabBarIcon: ({ color }) => <MaterialCommunityIcons name="qrcode-scan" size={35} color={color} />,
         }}
       />
+
+      
       
       </Tabs>
   );
